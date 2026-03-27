@@ -1,0 +1,14 @@
+# Test harness configuration
+# Tells the harness where things are relative to this file
+
+phone_agent:
+  path: "../phone"                    # Phone agent source directory
+  start_cmd: "uv run src/main.py dev" # How to start it
+  session_logs: "../phone/logs/sessions"  # Where session logs are written
+  env_file: "../phone/.env.local"     # Shared credentials
+
+defaults:
+  tts_provider: cartesia
+  stt_provider: deepgram
+  test_timeout_sec: 120
+  wait_for_greeting_sec: 4

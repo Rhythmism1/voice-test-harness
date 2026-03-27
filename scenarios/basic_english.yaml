@@ -1,0 +1,46 @@
+# Basic English conversation test
+# Tests: STT accuracy, turn-taking, response coherence
+name: basic_english
+language: en
+description: "Standard English passage + follow-up question"
+
+# Test agent config
+tester:
+  tts_provider: cartesia  # Different from phone agent's STT to avoid feedback loop
+  stt_provider: deepgram   # Records what phone agent says back
+  voice: a0e99841-438c-4a64-b679-ae501e7d6091  # Cartesia default English voice
+
+# Prompts spoken by the test agent, in order
+prompts:
+  - text: "One of the traits that set Navy Seal teams apart is their combination of stealth and adaptability. They can reliably navigate complex and dangerous landscapes in complete silence."
+    pause_after_sec: 2.0
+    wait_for_response: true
+
+  - text: "This is one of the reasons seals are chosen to take on operations like the mission to kill Osama bin Laden. The mission to rescue Captain Richard Phillips on the Maersk Alabama."
+    pause_after_sec: 2.0
+    wait_for_response: true
+
+  - text: "I need help booking a flight to New York next Tuesday."
+    pause_after_sec: 1.0
+    wait_for_response: true
+
+# Expected words that should appear in the phone agent's STT output
+# Used for WER calculation against the original prompts
+expected_keywords:
+  - navy
+  - seal
+  - stealth
+  - adaptability
+  - osama
+  - bin laden
+  - maersk
+  - alabama
+  - flight
+  - new york
+
+# Pass/fail thresholds
+thresholds:
+  max_avg_llm_ttft_ms: 1500
+  max_avg_tts_ttfb_ms: 500
+  min_ensemble_word_confidence: 0.8
+  max_wer: 0.15  # 15% word error rate

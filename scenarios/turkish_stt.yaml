@@ -1,0 +1,35 @@
+# Turkish STT accuracy test
+name: turkish_stt
+language: tr
+description: "Turkish conversation to test multilingual STT accuracy"
+
+tester:
+  tts_provider: cartesia
+  stt_provider: deepgram
+  voice: a0e99841-438c-4a64-b679-ae501e7d6091  # Replace with Turkish voice ID
+
+prompts:
+  - text: "Merhaba, benim adim Ahmet. Bir ucak bileti almak istiyorum."
+    pause_after_sec: 2.0
+    wait_for_response: true
+
+  - text: "Istanbul'dan Ankara'ya yarin saat on ikide bir ucus var mi?"
+    pause_after_sec: 2.0
+    wait_for_response: true
+
+  - text: "Tesekkur ederim, bu cok yardimci oldu."
+    pause_after_sec: 1.0
+    wait_for_response: true
+
+expected_keywords:
+  - ahmet
+  - ucak
+  - bileti
+  - istanbul
+  - ankara
+
+thresholds:
+  max_avg_llm_ttft_ms: 2000
+  max_avg_tts_ttfb_ms: 600
+  min_ensemble_word_confidence: 0.7
+  max_wer: 0.25  # Higher threshold for non-English
