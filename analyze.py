@@ -138,6 +138,13 @@ def analyze_run(run_dir: str, output_json: bool = False) -> dict:
                         f"Ensemble confidence {results['metrics']['avg_ensemble_confidence']:.1%} below {thresholds['min_ensemble_word_confidence']:.1%}"
                     )
 
+    # === Phone Stdout Logs (full terminal output) ===
+    stdout_path = run_path / "phone_stdout.log"
+    if stdout_path.exists():
+        stdout_metrics = _parse_stdout_log(stdout_path)
+        results["metrics"].update(stdout_metrics)
+        results["stdout_log_lines"] = sum(1 for _ in open(stdout_path))
+
     # === Output ===
     if output_json:
         print(json.dumps(results, indent=2))
@@ -149,6 +156,57 @@ def analyze_run(run_dir: str, output_json: bool = False) -> dict:
     analysis_path.write_text(json.dumps(results, indent=2))
 
     return results
+
+
+def _parse_stdout_log(path: Path) -> dict:
+    """Parse the full terminal output for metrics not in the session log.
+
+    The phone agent's stdout contains LiveKit framework logs with:
+    - EOU predictions (eou_probability, duration, input text)
+    - Memory usage warnings (memory_usage_mb)
+    - Preemptive generation timing
+    - Speechmatics Start/EndOfTurn events
+    """
+    import re
+
+    metrics: dict = {}
+    eou_probs = []
+    memory_readings = []
+    speechmatics_events = {"StartOfTurn": 0, "EndOfTurn": 0, "EndOfTranscript": 0}
+
+    text = path.read_text(errors="replace")
+    for line in text.split("\n"):
+        # EOU predictions
+        m = re.search(r'"eou_probability":\s*([\d.e-]+)', line)
+        if m:
+            eou_probs.append(float(m.group(1)))
+
+        # Memory usage
+        m = re.search(r'"memory_usage_mb":\s*([\d.]+)', line)
+        if m:
+            memory_readings.append(float(m.group(1)))
+
+        # Speechmatics events
+        for event_type in speechmatics_events:
+            if event_type in line and "echmatics" in line:
+                speechmatics_events[event_type] += 1
+
+    if eou_probs:
+        metrics["eou_prediction_count"] = len(eou_probs)
+        metrics["eou_max_probability"] = round(max(eou_probs), 4)
+        # How many predictions were above commit threshold (typically ~0.5)
+        metrics["eou_above_threshold"] = sum(1 for p in eou_probs if p > 0.5)
+
+    if memory_readings:
+        metrics["peak_memory_mb"] = round(max(memory_readings), 1)
+        metrics["avg_memory_mb"] = round(sum(memory_readings) / len(memory_readings), 1)
+
+    if any(v > 0 for v in speechmatics_events.values()):
+        metrics["speechmatics_start_of_turn"] = speechmatics_events["StartOfTurn"]
+        metrics["speechmatics_end_of_turn"] = speechmatics_events["EndOfTurn"]
+        metrics["speechmatics_end_of_transcript"] = speechmatics_events["EndOfTranscript"]
+
+    return metrics
 
 
 def _print_report(results: dict):
@@ -175,6 +233,12 @@ def _print_report(results: dict):
         print(f"  Ensemble Conf (min):    {m['min_ensemble_confidence']:.1%}")
     if "turn_count" in m:
         print(f"  Turns:                  {m['turn_count']}")
+    if "peak_memory_mb" in m:
+        print(f"  Peak Memory:            {m['peak_memory_mb']}MB")
+    if "eou_prediction_count" in m:
+        print(f"  EOU Predictions:        {m['eou_prediction_count']} ({m.get('eou_above_threshold', 0)} above threshold)")
+    if "speechmatics_start_of_turn" in m:
+        print(f"  Speechmatics Turns:     {m['speechmatics_start_of_turn']} start / {m['speechmatics_end_of_turn']} end")
 
     print(f"{'─' * 60}")
     status = "PASS" if results["pass"] else "FAIL"

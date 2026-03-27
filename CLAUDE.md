@@ -22,13 +22,17 @@ When given a task that requires empirical testing (STT accuracy, latency measure
 - Run results: `./logs/runs/<run_id>/`
 - Harness config: `./harness.yaml`
 
-## Phone agent session log format
+## Log files per run
 
-The session logs at `../phone/logs/sessions/<timestamp>_<conversation_id>.json` contain:
-- `events[]` — structured events (kind: stt_turn, llm, tts, eou, ensemble_validation)
-- `rawLogs[]` — all Python log lines captured during the call
-- `meta` — STT provider, LLM provider, ensemble enabled flag
-- `durationSec` — call length
+Each run produces these files in `logs/runs/<run_id>/`:
+
+| File | What | How to use |
+|------|------|-----------|
+| `phone_stdout.log` | **Full terminal output** — EOU predictions with probabilities, memory warnings, Speechmatics WebSocket events, LiveKit debug logs. This is the richest data source. | Parse with regex for specific metrics. `analyze.py` already extracts EOU probs, memory, Speechmatics event counts. |
+| `phone_session.json` | **Structured events** — STT turns, LLM/TTS/EOU metrics, ensemble validations, Python raw logs. Written by SessionLogger in dev mode. | Read `events[]` for typed data, `rawLogs[]` for Python logger output. |
+| `tester.json` | **Tester side** — what prompts were spoken, what was heard back, timing per turn. | Compare `prompt_text` vs phone agent's STT output for WER. |
+| `analysis.json` | **Computed metrics** — WER, avg latencies, ensemble confidence, memory, pass/fail. | Machine-readable summary. Read this first. |
+| `phone_stdout.log` has data that `phone_session.json` does NOT — specifically LiveKit's Rust/Go layer output (EOU predictions, memory usage, connection events) which bypasses Python's logging system.
 
 ## When writing new scenarios
 
