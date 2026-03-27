@@ -1,0 +1,185 @@
+{
+  "agent": {
+    "_creationTime": 1774607454386.4082,
+    "_id": "j57dwty1na1smcfebtprmzbedh83phqe",
+    "campaignId": "j973qr8vsh0zvkfexe09ksjbys81evh3",
+    "commitMessage": "wer",
+    "companyId": "jd77ztrjr7mch8c1134x4g9b1181evnr",
+    "config": {
+      "backgroundAudio": {
+        "ambientSound": "office",
+        "ambientVolume": 0.7,
+        "enabled": true,
+        "thinkingEnabled": true,
+        "thinkingSound": "keyboard",
+        "thinkingVolume": 0.5
+      },
+      "llm": {
+        "model": "gpt-4.1",
+        "provider": "openai"
+      },
+      "messaging": {
+        "enabled": true,
+        "idleInterval": 20,
+        "idleMessages": [
+          "Are you still there? I'm here whenever you're ready.",
+          "Take your time. I'm not going anywhere.",
+          "Just checking in \u2014 I'm here to help whenever you need me."
+        ],
+        "idleTimeout": 90
+      },
+      "noiseCancellation": {
+        "enabled": true
+      },
+      "session": {
+        "preemptiveGeneration": true,
+        "userAwayTimeout": 8
+      },
+      "stt": {
+        "ensembleEnabled": true,
+        "language": "en",
+        "languageHintsStrict": true,
+        "languages": [
+          "tr"
+        ],
+        "model": "realtime",
+        "provider": "speechmatics"
+      },
+      "turnDetection": {
+        "enabled": true,
+        "interruptionDelay": 0.6,
+        "maxTurnDuration": 30,
+        "minInterruptionWords": 1,
+        "mode": "english",
+        "silenceThreshold": 600
+      },
+      "vad": {
+        "enabled": true,
+        "sensitivity": 0.5
+      },
+      "voice": {
+        "language": "en",
+        "model": "sonic-2",
+        "provider": "cartesia",
+        "speed": 0,
+        "voiceId": "a01c369f-6d2d-4185-bc20-b32c225eab70"
+      }
+    },
+    "createdBy": "k17f9prxt7b39tq8t1dbnnnr9d81f8xe",
+    "enabledToolSlugs": [
+      "get_flight_status",
+      "get_booking_details",
+      "search_flights",
+      "check_baggage_allowance",
+      "report_lost_baggage",
+      "check_miles_balance"
+    ],
+    "instructions": "##GLOBAL_RULES\nYou are a friendly airline phone agent. Keep answers short and natural. Use tools when the caller gives you a flight number or confirmation code.\n\n##GREETING\nSAY: \"Hi, thanks for calling. How can I help?\"\n\n##INTENT\n- Flight status \u2192 ask for flight number, use 'get_flight_status'\n- Booking question \u2192 ask for confirmation code, use 'get_booking_details'\n- Baggage \u2192 ask what they need, use 'check_baggage_allowance' or 'report_lost_baggage'\n- Miles \u2192 ask for membership number, use 'check_miles_balance'\n- Anything else \u2192 answer if you can, otherwise say \"I'd recommend calling our main line at one eight hundred five five five zero one nine nine.\"\n\n##CLOSING\nSAY: \"Thanks for calling. Have a great day.\"\nWait for goodbye before ending the call.",
+    "name": "Airline Inbound Assistant",
+    "parentAgentId": "j57barp4tn30zb29c660rfa7ks83pztk",
+    "personality": "Professional, empathetic, and efficient airline customer service representative. Calm under pressure, precise with regulations, warm with distressed callers.",
+    "subagents": [
+      {
+        "agentAccess": [],
+        "description": "Handles all airline customer service inquiries",
+        "greetings": {
+          "allowInterruptions": true,
+          "greeting": "Thank you for calling. How can I help you today?"
+        },
+        "id": "sa_main_001",
+        "instructions": "",
+        "name": "MAIN",
+        "tools": [
+          "get_flight_status",
+          "get_booking_details",
+          "search_flights",
+          "check_baggage_allowance",
+          "report_lost_baggage",
+          "check_miles_balance"
+        ]
+      }
+    ],
+    "summaryLanguage": "english"
+  },
+  "campaign": {
+    "_creationTime": 1771541885172.522,
+    "_id": "j973qr8vsh0zvkfexe09ksjbys81evh3",
+    "companyId": "jd77ztrjr7mch8c1134x4g9b1181evnr",
+    "createdAt": "2026-02-19T22:58:05.172Z",
+    "name": "Rhythms Local Campaign",
+    "phoneNumber": "+18552563017",
+    "productionAgentId": "j57dwty1na1smcfebtprmzbedh83phqe",
+    "sipTrunkId": "ST_MED6LBdEiLKV",
+    "slug": "rhythms-local-campaign",
+    "status": "active",
+    "timezone": "America/New_York",
+    "type": "both"
+  },
+  "company": {
+    "_creationTime": 1771541885172.5217,
+    "_id": "jd77ztrjr7mch8c1134x4g9b1181evnr",
+    "config": {
+      "configVersion": 1,
+      "fees": {
+        "member": {
+          "businessHours": 95,
+          "nonBusinessHours": 125
+        },
+        "nonMember": {
+          "businessHours": 125,
+          "nonBusinessHours": 155
+        }
+      },
+      "hours": {
+        "friday": [
+          {
+            "close": "17:00",
+            "open": "09:00"
+          }
+        ],
+        "monday": [
+          {
+            "close": "17:00",
+            "open": "09:00"
+          }
+        ],
+        "saturday": [],
+        "sunday": [],
+        "thursday": [
+          {
+            "close": "17:00",
+            "open": "09:00"
+          }
+        ],
+        "tuesday": [
+          {
+            "close": "17:00",
+            "open": "09:00"
+          }
+        ],
+        "wednesday": [
+          {
+            "close": "17:00",
+            "open": "09:00"
+          }
+        ]
+      },
+      "info": {
+        "phoneMain": "",
+        "sipUri": ""
+      },
+      "integrations": {},
+      "jobTypes": [],
+      "serviceAreas": {
+        "zipCodes": []
+      },
+      "transfer": {}
+    },
+    "highlightColor": "#3b82f6",
+    "language": "english",
+    "name": "Rhythms Local Company",
+    "slug": "rhythms-local-company",
+    "timezone": "America/New_York",
+    "updatedAt": "2026-02-19T22:58:05.172Z"
+  }
+}
