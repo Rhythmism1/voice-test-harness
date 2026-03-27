@@ -1,0 +1,43 @@
+# Test: concise system prompt
+# Compares response length and TTFT when agent is told to be brief
+name: prompt_concise
+language: en
+description: "Override system prompt to enforce concise responses, measure TTFT and response quality"
+
+# Override agent fields before dispatch — merged into test_agent_config.json
+agent_overrides:
+  instructions: |
+    You are a concise airline phone agent.
+    Rules:
+    - Maximum 2 sentences per response
+    - Never repeat what the caller said
+    - If you don't know, say so in one sentence
+    - No filler phrases like "Great question!" or "I'd be happy to help"
+  personality: "Direct and efficient. No small talk."
+
+tester:
+  voice: a0e99841-438c-4a64-b679-ae501e7d6091
+
+prompts:
+  - text: "What's your baggage policy for international flights?"
+    pause_after_sec: 3.0
+    wait_for_response: true
+
+  - text: "Can I bring a guitar as carry-on?"
+    pause_after_sec: 3.0
+    wait_for_response: true
+
+  - text: "What about oversized luggage fees?"
+    pause_after_sec: 3.0
+    wait_for_response: true
+
+  - text: "How do I change my seat assignment?"
+    pause_after_sec: 3.0
+    wait_for_response: true
+
+  - text: "Thanks, that's all I needed."
+    pause_after_sec: 2.0
+    wait_for_response: true
+
+thresholds:
+  max_avg_llm_ttft_ms: 1200

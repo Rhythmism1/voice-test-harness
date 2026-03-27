@@ -92,8 +92,29 @@ async def run_single_call(
         overrides = {}
         if config_path.exists():
             full_config = json.loads(config_path.read_text())
+            agent_config = dict(full_config.get("agent", {}))
+
+            # Apply scenario-level agent overrides
+            agent_overrides = scenario.get("agent_overrides", {})
+            for key, val in agent_overrides.items():
+                if key == "config" and isinstance(val, dict):
+                    # Deep merge into agent.config
+                    cfg = dict(agent_config.get("config", {}))
+                    for ck, cv in val.items():
+                        if isinstance(cv, dict) and isinstance(cfg.get(ck), dict):
+                            cfg[ck] = {**cfg[ck], **cv}
+                        else:
+                            cfg[ck] = cv
+                    agent_config["config"] = cfg
+                else:
+                    # Top-level override (instructions, personality, name, etc.)
+                    agent_config[key] = val
+
+            if agent_overrides:
+                logger.info(f"[Call {call_index}] Applied agent overrides: {list(agent_overrides.keys())}")
+
             overrides = {
-                "local_agent_config": full_config.get("agent"),
+                "local_agent_config": agent_config,
                 "campaign_data": full_config.get("campaign"),
                 "company_data": full_config.get("company"),
             }

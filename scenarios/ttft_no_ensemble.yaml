@@ -1,0 +1,41 @@
+# TTFT benchmark with ensemble disabled
+# Compare against ttft_benchmark.yaml to measure ensemble overhead
+name: ttft_no_ensemble
+language: en
+description: "Same prompts as ttft_benchmark but with ensemble STT disabled"
+
+agent_overrides:
+  config:
+    stt:
+      ensembleEnabled: false
+
+tester:
+  voice: a0e99841-438c-4a64-b679-ae501e7d6091
+
+prompts:
+  - text: "Hi, I need help booking a flight from New York to London next Friday."
+    pause_after_sec: 3.0
+    wait_for_response: true
+
+  - text: "I'd prefer a morning flight, economy class. What options do you have?"
+    pause_after_sec: 3.0
+    wait_for_response: true
+
+  - text: "That sounds good. Can you also check if there are any direct flights?"
+    pause_after_sec: 3.0
+    wait_for_response: true
+
+  - text: "What's the baggage allowance for economy on that airline?"
+    pause_after_sec: 3.0
+    wait_for_response: true
+
+  - text: "One more thing. Do I need a visa for a short layover in Dublin?"
+    pause_after_sec: 3.0
+    wait_for_response: true
+
+  - text: "Perfect, I think that covers everything. Thank you for your help."
+    pause_after_sec: 2.0
+    wait_for_response: true
+
+thresholds:
+  max_avg_llm_ttft_ms: 1500

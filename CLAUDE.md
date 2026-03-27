@@ -48,9 +48,52 @@ thresholds:
   max_avg_llm_ttft_ms: 1500
 ```
 
+## Overriding agent config from scenarios
+
+Scenarios can override any field on the agent config without touching the phone agent code.
+The base config lives in `test_agent_config.json` (dumped from Convex). Scenario overrides
+are merged on top before dispatch.
+
+### Override system prompt / personality
+```yaml
+agent_overrides:
+  instructions: "You are a concise agent. Max 2 sentences."
+  personality: "Direct. No filler."
+```
+
+### Override nested config (STT, LLM, TTS, etc.)
+```yaml
+agent_overrides:
+  config:
+    stt:
+      ensembleEnabled: false
+      provider: deepgram
+    llm:
+      model: gpt-4o-mini
+```
+
+### Available override targets
+- `instructions` — system prompt (top-level string)
+- `personality` — personality description (top-level string)
+- `name` — agent name
+- `config.stt.*` — STT provider, model, language, ensembleEnabled
+- `config.llm.*` — LLM provider, model
+- `config.voice.*` — TTS provider, voice ID, speed
+- `config.turnDetection.*` — EOU settings
+- `config.vad.*` — Voice Activity Detection settings
+- Any other field on the agent document
+
+### Comparison testing pattern
+Create two scenarios with identical prompts but different overrides:
+```
+scenarios/prompt_concise.yaml   → agent_overrides.instructions = "Be brief..."
+scenarios/prompt_verbose.yaml   → no overrides (default prompt)
+```
+Run both, compare TTFT and response characteristics.
+
 ## Important
 
-- The phone agent MUST be started with `dev` mode for session logs to be written
-- The harness starts the phone agent itself — don't start it separately
+- The phone agent MUST be running in `dev` mode in a separate terminal
 - LiveKit credentials come from `../phone/.env.local`
-- Each run creates a room, runs the test, deletes the room — no manual cleanup needed
+- Each run creates a room, dispatches to the running agent, then deletes the room
+- `test_agent_config.json` is the base config — regenerate it if the agent changes in Convex
