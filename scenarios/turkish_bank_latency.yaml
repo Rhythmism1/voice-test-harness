@@ -1,0 +1,47 @@
+# Turkish bank prompt — per-turn latency check
+# Large prompt (~44KB) — tests whether prompt size causes TTFT spikes
+name: turkish_bank_latency
+language: tr
+description: "Load full Turkish bank prompt, 6 turns, check per-turn TTFT for spikes"
+
+agent_overrides:
+  instructions_file: prompt.txt
+  config:
+    stt:
+      provider: speechmatics
+      language: tr
+      languageHintsStrict: false
+      ensembleEnabled: false
+    llm:
+      model: gpt-4.1
+
+tester:
+  voice: a0e99841-438c-4a64-b679-ae501e7d6091
+
+prompts:
+  - text: "Merhaba, benim adim Ahmet."
+    pause_after_sec: 4.0
+    wait_for_response: true
+
+  - text: "Evet, ek hesap teklifi hakkinda bilgi almak istiyorum."
+    pause_after_sec: 4.0
+    wait_for_response: true
+
+  - text: "Limit ne kadar?"
+    pause_after_sec: 4.0
+    wait_for_response: true
+
+  - text: "Faiz orani nedir?"
+    pause_after_sec: 4.0
+    wait_for_response: true
+
+  - text: "Islem ucreti var mi?"
+    pause_after_sec: 4.0
+    wait_for_response: true
+
+  - text: "Tamam, tesekkur ederim. Dusunecegim."
+    pause_after_sec: 3.0
+    wait_for_response: true
+
+thresholds:
+  max_avg_llm_ttft_ms: 2000

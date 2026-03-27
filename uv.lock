@@ -1829,6 +1829,7 @@ dependencies = [
     { name = "livekit-plugins-deepgram" },
     { name = "livekit-plugins-openai" },
     { name = "livekit-plugins-silero" },
+    { name = "numpy" },
     { name = "python-dotenv" },
     { name = "pyyaml" },
 ]
@@ -1849,6 +1850,7 @@ requires-dist = [
     { name = "livekit-plugins-deepgram" },
     { name = "livekit-plugins-openai" },
     { name = "livekit-plugins-silero" },
+    { name = "numpy" },
     { name = "python-dotenv" },
     { name = "pyyaml" },
 ]

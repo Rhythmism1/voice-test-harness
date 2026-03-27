@@ -15,6 +15,7 @@ dependencies = [
     "jiwer",
     "httpx",
     "aiohttp",
+    "numpy",
 ]
 
 [tool.uv]

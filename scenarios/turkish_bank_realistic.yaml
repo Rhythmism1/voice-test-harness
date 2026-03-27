@@ -1,0 +1,51 @@
+# Turkish bank — realistic first-turn timing
+# Simulates real caller: speaks "hello" right after agent greeting starts
+# This hits the AEC warmup window, replicating the 5-6s first-turn latency
+name: turkish_bank_realistic
+language: tr
+description: "Realistic timing — speak during/after greeting to hit AEC warmup delay"
+
+agent_overrides:
+  instructions_file: prompt.txt
+  config:
+    stt:
+      provider: speechmatics
+      language: tr
+      languageHintsStrict: false
+      ensembleEnabled: false
+    llm:
+      model: gpt-4.1
+
+tester:
+  voice: a0e99841-438c-4a64-b679-ae501e7d6091
+  # 0s = speak immediately when greeting audio detected (hits AEC warmup)
+  # This is what real callers do — they say "hello" as soon as they hear the agent
+  wait_after_greeting_sec: 0
+
+prompts:
+  - text: "Merhaba."
+    pause_after_sec: 6.0
+    wait_for_response: true
+
+  - text: "Evet, ek hesap teklifi hakkinda bilgi almak istiyorum."
+    pause_after_sec: 4.0
+    wait_for_response: true
+
+  - text: "Limit ne kadar?"
+    pause_after_sec: 4.0
+    wait_for_response: true
+
+  - text: "Faiz orani nedir?"
+    pause_after_sec: 4.0
+    wait_for_response: true
+
+  - text: "Islem ucreti var mi?"
+    pause_after_sec: 4.0
+    wait_for_response: true
+
+  - text: "Tamam, tesekkur ederim."
+    pause_after_sec: 3.0
+    wait_for_response: true
+
+thresholds:
+  max_avg_llm_ttft_ms: 2500

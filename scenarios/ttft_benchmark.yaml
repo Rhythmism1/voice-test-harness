@@ -7,6 +7,7 @@ description: "6-turn conversation for measuring LLM time-to-first-token"
 tester:
   tts_provider: cartesia
   voice: a0e99841-438c-4a64-b679-ae501e7d6091
+  wait_after_greeting_sec: 4  # Skip AEC window for clean baseline measurement
 
 prompts:
   - text: "Hi, I need help booking a flight from New York to London next Friday."
