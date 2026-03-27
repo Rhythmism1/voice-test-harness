@@ -186,10 +186,13 @@ def _parse_stdout_log(path: Path) -> dict:
         if m:
             memory_readings.append(float(m.group(1)))
 
-        # Speechmatics events
-        for event_type in speechmatics_events:
-            if event_type in line and "echmatics" in line:
-                speechmatics_events[event_type] += 1
+        # Speechmatics events (logger name is truncated differently in terminal output)
+        if "StartOfTurn received" in line:
+            speechmatics_events["StartOfTurn"] += 1
+        if "EndOfTurn received" in line:
+            speechmatics_events["EndOfTurn"] += 1
+        if "EndOfTranscript message" in line:
+            speechmatics_events["EndOfTranscript"] += 1
 
     if eou_probs:
         metrics["eou_prediction_count"] = len(eou_probs)
