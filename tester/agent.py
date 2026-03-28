@@ -1,11 +1,12 @@
 """
-Test Agent — Joins a LiveKit room and speaks scripted prompts.
+Tester Agent — A LiveKit agent that acts as a caller.
 
-This is the "caller" side of the test. It:
-1. Speaks each prompt via TTS
-2. Waits for the phone agent to respond
-3. Records what the phone agent said via STT
-4. Logs everything for post-run analysis
+Joins a room, listens to the phone agent's greeting, speaks scripted
+prompts, records what it hears back. Runs as a real LiveKit agent worker
+so it handles audio natively (no TwiML, no Twilio TTS).
+
+Started by the orchestrator via LiveKit dispatch. Receives scenario
+config in job metadata.
 """
 
 import asyncio
@@ -20,22 +21,20 @@ from dotenv import load_dotenv
 from livekit import rtc
 from livekit.agents import (
     AgentSession,
+    Agent,
     JobContext,
     JobProcess,
     WorkerOptions,
     cli,
+    RoomInputOptions,
 )
-from livekit.agents.stt import STT, SpeechEventType
+from livekit.agents.voice.events import AgentState
 from livekit.plugins import cartesia, deepgram, silero
 
-load_dotenv(".env.local")
-load_dotenv(".env")
+load_dotenv(str(Path(__file__).parent.parent / ".env.local"))
+load_dotenv(str(Path(__file__).parent.parent.parent / "phone" / ".env.local"))
 
-logger = logging.getLogger("test-agent")
-
-# Global state passed via process userdata
-_scenario = None
-_run_id = None
+logger = logging.getLogger("tester-agent")
 
 
 def prewarm(proc: JobProcess):
@@ -43,14 +42,11 @@ def prewarm(proc: JobProcess):
 
 
 async def entrypoint(ctx: JobContext):
-    """Test agent entrypoint — speaks prompts, records responses."""
-    global _scenario, _run_id
-
-    # Parse scenario from metadata
+    """Tester agent — speaks prompts, records responses."""
     metadata = json.loads(ctx.job.metadata) if ctx.job.metadata else {}
     scenario_path = metadata.get("scenario_path")
     run_id = metadata.get("run_id", f"run_{int(time.time())}")
-    _run_id = run_id
+    call_index = metadata.get("call_index", 1)
 
     if not scenario_path or not Path(scenario_path).exists():
         logger.error(f"Scenario not found: {scenario_path}")
@@ -58,196 +54,133 @@ async def entrypoint(ctx: JobContext):
 
     with open(scenario_path) as f:
         scenario = yaml.safe_load(f)
-    _scenario = scenario
 
-    logger.info(f"[TestAgent] Scenario: {scenario['name']}, Run: {run_id}")
+    logger.info(f"[Tester] Scenario: {scenario['name']}, Run: {run_id}, Call: {call_index}")
 
-    # Connect to room
     await ctx.connect()
-    logger.info(f"[TestAgent] Connected to room: {ctx.room.name}")
+    logger.info(f"[Tester] Connected to room: {ctx.room.name}")
 
     # Wait for the phone agent to join
-    participant = await _wait_for_other_participant(ctx.room, timeout=30)
-    if not participant:
-        logger.error("[TestAgent] Phone agent never joined")
-        return
+    agent_participant = None
+    for p in ctx.room.remote_participants.values():
+        agent_participant = p
+        break
 
-    logger.info(f"[TestAgent] Phone agent joined: {participant.identity}")
+    if not agent_participant:
+        join_fut = asyncio.Future()
 
-    # Set up STT to record what we hear
-    tester_config = scenario.get("tester", {})
-    stt = deepgram.STT(model="nova-3", language=scenario.get("language", "en"))
-    tts = cartesia.TTS(
-        voice=tester_config.get("voice", "a0e99841-438c-4a64-b679-ae501e7d6091"),
-    )
-
-    # Run the scripted conversation
-    results = await _run_script(ctx, scenario, stt, tts, participant)
-
-    # Save results
-    _save_results(run_id, scenario, results)
-    logger.info(f"[TestAgent] Done. {len(results['turns'])} turns completed.")
-
-    # Disconnect
-    await ctx.room.disconnect()
-
-
-async def _wait_for_other_participant(room: rtc.Room, timeout: float = 30) -> rtc.RemoteParticipant | None:
-    """Wait for another participant (the phone agent) to join."""
-    # Check if already present
-    for p in room.remote_participants.values():
-        return p
-
-    # Wait for join event
-    fut = asyncio.Future()
-
-    @room.on("participant_connected")
-    def on_join(participant: rtc.RemoteParticipant):
-        if not fut.done():
-            fut.set_result(participant)
-
-    try:
-        return await asyncio.wait_for(fut, timeout)
-    except asyncio.TimeoutError:
-        return None
-
-
-async def _run_script(ctx: JobContext, scenario: dict, stt: STT, tts, participant) -> dict:
-    """Execute the scripted prompts and record responses."""
-    prompts = scenario.get("prompts", [])
-    turns = []
-    heard_texts = []
-
-    # Subscribe to participant's audio
-    audio_stream = None
-    for pub in participant.track_publications.values():
-        if pub.kind == rtc.TrackKind.KIND_AUDIO and pub.track:
-            audio_stream = rtc.AudioStream(pub.track)
-            break
-
-    if not audio_stream:
-        # Wait for track to be published
-        track_fut = asyncio.Future()
-
-        @ctx.room.on("track_subscribed")
-        def on_track(track, publication, p):
-            if p.identity == participant.identity and track.kind == rtc.TrackKind.KIND_AUDIO:
-                if not track_fut.done():
-                    track_fut.set_result(track)
+        @ctx.room.on("participant_connected")
+        def on_join(p):
+            if not join_fut.done():
+                join_fut.set_result(p)
 
         try:
-            track = await asyncio.wait_for(track_fut, 10)
-            audio_stream = rtc.AudioStream(track)
+            agent_participant = await asyncio.wait_for(join_fut, 20)
         except asyncio.TimeoutError:
-            logger.warning("[TestAgent] No audio track from phone agent")
+            logger.error("[Tester] Phone agent never joined")
+            return
 
-    # Create audio source for our TTS output
-    audio_source = rtc.AudioSource(sample_rate=24000, num_channels=1)
-    track = rtc.LocalAudioTrack.create_audio_track("tester-audio", audio_source)
-    await ctx.room.local_participant.publish_track(track)
+    logger.info(f"[Tester] Phone agent joined: {agent_participant.identity}")
 
-    # Wait a moment for the greeting
-    logger.info("[TestAgent] Waiting for agent greeting...")
-    await asyncio.sleep(4)
+    # Create a simple agent that speaks the prompts
+    tester = TesterVoiceAgent(scenario=scenario, run_id=run_id, call_index=call_index)
 
-    for i, prompt in enumerate(prompts):
-        turn_start = time.time()
-        text = prompt["text"]
-        logger.info(f"[TestAgent] Speaking prompt {i+1}/{len(prompts)}: {text[:60]}...")
+    import aiohttp
+    http_session = aiohttp.ClientSession()
 
-        # Synthesize and send audio
-        synth = tts.synthesize(text)
-        async for audio_event in synth:
-            await audio_source.capture_frame(audio_event.frame)
+    tts_voice = scenario.get("tester", {}).get("voice", "a0e99841-438c-4a64-b679-ae501e7d6091")
+    tts = cartesia.TTS(voice=tts_voice, http_session=http_session)
+    stt = deepgram.STT(model="nova-3", language=scenario.get("language", "en"))
 
-        speak_end = time.time()
+    session = AgentSession(
+        stt=stt,
+        tts=tts,
+        vad=ctx.proc.userdata["vad"],
+    )
 
-        # Wait for response
-        pause = prompt.get("pause_after_sec", 2.0)
-        response_text = ""
+    # Track what we hear from the phone agent
+    heard_texts = []
+    turn_log = []
 
-        if prompt.get("wait_for_response", True) and audio_stream:
-            # Listen for agent response via STT
-            response_text = await _listen_for_response(stt, audio_stream, timeout=15)
+    @session.on("user_input_transcribed")
+    def on_user_input(event):
+        if event.is_final and event.transcript.strip():
+            heard_texts.append(event.transcript)
+            logger.info(f"[Tester] Heard: {event.transcript[:60]}")
 
-        turn_end = time.time()
+    await session.start(
+        agent=tester,
+        room=ctx.room,
+    )
 
-        turn = {
-            "prompt_index": i,
-            "prompt_text": text,
-            "speak_duration_ms": round((speak_end - turn_start) * 1000),
-            "response_text": response_text,
-            "response_wait_ms": round((turn_end - speak_end) * 1000),
-            "total_turn_ms": round((turn_end - turn_start) * 1000),
-        }
-        turns.append(turn)
-        heard_texts.append(response_text)
-        logger.info(f"[TestAgent] Heard: {response_text[:80]}...")
+    # Wait for the agent to finish its script
+    await tester.done_event.wait()
 
-        # Pause before next prompt
-        await asyncio.sleep(pause)
+    # Brief pause then save results
+    await asyncio.sleep(2)
 
-    return {
-        "turns": turns,
+    # Save results
+    results = {
+        "run_id": run_id,
+        "call_index": call_index,
+        "scenario": scenario["name"],
+        "heard_from_agent": heard_texts,
         "all_heard": " ".join(heard_texts),
-        "scenario": scenario["name"],
-    }
-
-
-async def _listen_for_response(stt: STT, audio_stream, timeout: float = 15) -> str:
-    """Listen to audio stream via STT until silence, return accumulated text."""
-    stream = stt.stream()
-    texts = []
-    last_final = time.time()
-
-    async def feed_audio():
-        async for frame_event in audio_stream:
-            stream.push_frame(frame_event.frame)
-
-    async def collect_transcripts():
-        nonlocal last_final
-        async for event in stream:
-            if event.type == SpeechEventType.FINAL_TRANSCRIPT and event.alternatives:
-                text = event.alternatives[0].text
-                if text.strip():
-                    texts.append(text)
-                    last_final = time.time()
-
-    feed_task = asyncio.create_task(feed_audio())
-    collect_task = asyncio.create_task(collect_transcripts())
-
-    # Wait until we get silence (no new finals for 3s) or timeout
-    start = time.time()
-    while time.time() - start < timeout:
-        await asyncio.sleep(0.5)
-        if texts and time.time() - last_final > 3.0:
-            break
-
-    feed_task.cancel()
-    collect_task.cancel()
-    await stream.aclose()
-
-    return " ".join(texts)
-
-
-def _save_results(run_id: str, scenario: dict, results: dict):
-    """Save test results to logs/runs/<run_id>/tester.json"""
-    log_dir = Path("logs/runs") / run_id
-    log_dir.mkdir(parents=True, exist_ok=True)
-
-    payload = {
-        "runId": run_id,
-        "scenario": scenario["name"],
-        "language": scenario.get("language", "en"),
+        "turns": tester.turn_log,
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime()),
-        "turns": results["turns"],
-        "allHeard": results["all_heard"],
-        "thresholds": scenario.get("thresholds", {}),
     }
 
-    path = log_dir / "tester.json"
-    path.write_text(json.dumps(payload, indent=2))
-    logger.info(f"[TestAgent] Results saved to {path}")
+    log_dir = Path("logs/runs") / run_id / f"call_{call_index}_{int(time.time())}"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    (log_dir / "tester.json").write_text(json.dumps(results, indent=2))
+    logger.info(f"[Tester] Results saved to {log_dir / 'tester.json'}")
+
+    await http_session.close()
+
+
+class TesterVoiceAgent(Agent):
+    """Agent that speaks scripted prompts with pauses between them."""
+
+    def __init__(self, scenario: dict, run_id: str, call_index: int):
+        super().__init__(
+            instructions="You are a test caller. Just speak the scripted prompts.",
+        )
+        self._scenario = scenario
+        self._run_id = run_id
+        self._call_index = call_index
+        self.done_event = asyncio.Event()
+        self.turn_log = []
+
+    async def on_enter(self):
+        """Called when agent becomes active. Wait for greeting then speak prompts."""
+        prompts = self._scenario.get("prompts", [])
+
+        # Wait for phone agent's greeting
+        wait = self._scenario.get("tester", {}).get("wait_after_greeting_sec", 4)
+        logger.info(f"[Tester] Waiting {wait}s for agent greeting...")
+        await asyncio.sleep(wait)
+
+        for i, prompt in enumerate(prompts):
+            text = prompt["text"]
+            logger.info(f"[Tester] Speaking prompt {i+1}/{len(prompts)}: {text[:50]}...")
+
+            turn_start = time.time()
+            self.session.say(text, allow_interruptions=False)
+
+            # Wait for the phone agent to respond
+            pause = prompt.get("pause_after_sec", 4)
+            await asyncio.sleep(pause + 2)
+
+            self.turn_log.append({
+                "prompt_index": i,
+                "prompt_text": text,
+                "total_ms": round((time.time() - turn_start) * 1000),
+            })
+
+        # Done
+        logger.info(f"[Tester] All {len(prompts)} prompts spoken. Finishing.")
+        await asyncio.sleep(2)
+        self.done_event.set()
 
 
 if __name__ == "__main__":

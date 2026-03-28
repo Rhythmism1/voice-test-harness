@@ -1,24 +1,20 @@
 """
 End-to-End Phone Test
 
-Real phone-to-phone testing:
-1. Creates a LiveKit room and dispatches the phone agent in TestPhoneMode
-2. Phone agent calls our Twilio test number via SIP trunk
-3. Twilio answers and plays scripted TTS prompts (via TwiML bin)
-4. Call is recorded by Twilio
-5. Recording downloaded locally
+Real phone-to-phone testing with two LiveKit agents:
+1. Phone agent (production) — dispatched as TestVoiceMode
+2. Tester agent — dispatched as voice-tester, speaks scripted prompts
+3. SIP participant bridges the tester agent to a real phone call
+4. Twilio records both sides of the call
+5. Recordings downloaded locally to logs/runs/<run_id>/
 
-This goes through the FULL realistic path: LiveKit → SIP trunk → PSTN → Twilio → TwiML.
-
-Prerequisites:
-- Phone agent running in dev mode
-- Twilio test number configured with TwiML bin URL
+Flow:
+  LiveKit Room
+  ├── Phone Agent (TestVoiceMode) — listens, responds
+  ├── Tester Agent (voice-tester) — speaks prompts, records what it hears
+  └── SIP Participant — bridges to Twilio PSTN for recording
 
 Usage:
-    # First, create a TwiML bin on Twilio with scenario prompts:
-    uv run python phone_test.py scenarios/turkish_bank_realistic.yaml --setup-twiml
-
-    # Then run the test (phone agent must be running):
     uv run python phone_test.py scenarios/turkish_bank_realistic.yaml
     uv run python phone_test.py scenarios/turkish_bank_realistic.yaml --calls 2
 """
@@ -30,16 +26,16 @@ import json
 import logging
 import os
 import shutil
+import subprocess
 import sys
 import time
 import urllib.request
+import uuid
 from pathlib import Path
 
 import yaml
 from dotenv import load_dotenv
 from livekit import api as lk_api
-from twilio.rest import Client as TwilioClient
-from twilio.twiml.voice_response import VoiceResponse
 
 HARNESS_DIR = Path(__file__).parent
 HARNESS_CONFIG = yaml.safe_load((HARNESS_DIR / "harness.yaml").read_text())
@@ -52,137 +48,34 @@ load_dotenv(str(HARNESS_DIR / ".env.local"))
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)-20s %(message)s")
 logger = logging.getLogger("phone-test")
 
-# Twilio — set in .env.local or environment
+# Config from env
 TWILIO_SID = os.environ.get("TWILIO_ACCOUNT_SID", "")
 TWILIO_TOKEN = os.environ.get("TWILIO_AUTH_TOKEN", "")
 TEST_PHONE_NUMBER = os.environ.get("TEST_PHONE_NUMBER", "+17326552793")
+AGENT_PHONE_NUMBER = os.environ.get("AGENT_PHONE_NUMBER", "+17328386479")
+SIP_OUTBOUND_TRUNK = os.environ.get("SIP_OUTBOUND_TRUNK", "ST_9KtWBRmsXfG3")
 
-# LiveKit
-AGENT_NAME = "inbound-outbound"
-DEFAULT_AGENT_ID = "j57dwty1na1smcfebtprmzbedh83phqe"
-DEFAULT_CAMPAIGN_PHONE = "+18552563017"
-
-
-def make_twiml(scenario: dict) -> str:
-    """Build TwiML for the receiving end of the call."""
-    response = VoiceResponse()
-
-    language = scenario.get("language", "en")
-    voice_map = {
-        "en": "Polly.Matthew",
-        "tr": "Polly.Filiz",
-        "ar": "Polly.Zeina",
-        "de": "Polly.Hans",
-        "es": "Polly.Miguel",
-        "fr": "Polly.Mathieu",
-    }
-    voice = voice_map.get(language, "Polly.Matthew")
-
-    # Wait for agent greeting
-    wait = scenario.get("tester", {}).get("wait_after_greeting_sec", 0)
-    if wait > 0:
-        response.pause(length=int(wait))
-
-    for prompt in scenario.get("prompts", []):
-        response.say(prompt["text"], voice=voice, language=language)
-        pause = prompt.get("pause_after_sec", 4)
-        if prompt.get("wait_for_response", True):
-            response.pause(length=int(pause))
-
-    response.pause(length=2)
-    response.hangup()
-    return str(response)
-
-
-def setup_twiml_bin(scenario: dict) -> str:
-    """Create or update a TwiML Bin on Twilio with the scenario's prompts.
-    Returns the TwiML Bin URL that Twilio will fetch when the call is answered."""
-    twilio = TwilioClient(TWILIO_SID, TWILIO_TOKEN)
-    twiml_content = make_twiml(scenario)
-
-    # Check for existing bin
-    bins = twilio.serverless.v1.services.list()
-    # TwiML Bins are simpler — use the update API
-    # Actually, TwiML Bins aren't in the serverless API. Use the direct approach.
-
-    # Create via Twilio REST API for TwiML Bins
-    auth = base64.b64encode(f"{TWILIO_SID}:{TWILIO_TOKEN}".encode()).decode()
-
-    # List existing bins
-    req = urllib.request.Request(
-        f"https://handler.twilio.com/twiml/list?AccountSid={TWILIO_SID}",
-        headers={"Authorization": f"Basic {auth}"},
-    )
-
-    # Simpler: just configure the phone number's voice URL to a raw TwiML response
-    # We'll use Twilio's TwiML Bin feature via the API
-    import urllib.parse
-    data = urllib.parse.urlencode({
-        "FriendlyName": f"test-harness-{scenario['name']}",
-        "Twiml": twiml_content,
-    }).encode()
-
-    req = urllib.request.Request(
-        f"https://handler.twilio.com/twiml/EH?AccountSid={TWILIO_SID}",
-        data=data,
-        headers={
-            "Authorization": f"Basic {auth}",
-            "Content-Type": "application/x-www-form-urlencoded",
-        },
-    )
-
-    # TwiML Bins API is tricky. Instead, configure the number's voice URL
-    # to use inline TwiML via the phone number update API.
-    twilio_client = TwilioClient(TWILIO_SID, TWILIO_TOKEN)
-
-    # Find our test number
-    numbers = twilio_client.incoming_phone_numbers.list(phone_number=TEST_PHONE_NUMBER)
-    if not numbers:
-        logger.error(f"Test number {TEST_PHONE_NUMBER} not found in Twilio account")
-        return ""
-
-    # Update the number to use a TwiML Bin
-    # Actually the simplest: use voice_url pointing to a TwiML Bin
-    # But we need a hosted URL. Let's use Twilio Functions or just
-    # set the TwiML directly on the number (Twilio supports inline twiml
-    # for outbound calls but not for incoming)
-
-    # For incoming calls, we need a URL. The cleanest approach:
-    # Use a Twilio Function or a simple hosted endpoint.
-    # OR: use the `<Response>` approach with a static bin.
-
-    logger.info(f"TwiML content ({len(twiml_content)} chars):")
-    logger.info(twiml_content[:500])
-    return twiml_content
+PHONE_AGENT_NAME = "inbound-outbound"
+TESTER_AGENT_NAME = "voice-tester"
+RECORDINGS_DIR = HARNESS_DIR / "recordings"
 
 
 async def run_phone_test(scenario_path: str, num_calls: int = 1, run_id: str | None = None):
-    """Run end-to-end phone test using LiveKit outbound SIP."""
+    """Run end-to-end phone tests with real PSTN calls."""
     with open(scenario_path) as f:
         scenario = yaml.safe_load(f)
 
     run_id = run_id or f"phone_{scenario['name']}_{int(time.time())}"
     run_dir = Path("logs/runs") / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
+    RECORDINGS_DIR.mkdir(exist_ok=True)
 
-    twiml = make_twiml(scenario)
-    (run_dir / "twiml.xml").write_text(twiml)
-
-    logger.info(f"{'=' * 60}")
-    logger.info(f"  Phone Test: {run_id}")
-    logger.info(f"  Scenario: {scenario['name']} ({scenario.get('language', 'en')})")
-    logger.info(f"  Calls: {num_calls}")
-    logger.info(f"  Agent calls → {TEST_PHONE_NUMBER} (Twilio answers with TwiML)")
-    logger.info(f"{'=' * 60}")
-
-    # Load agent config overrides
+    # Load and apply agent config overrides
     config_path = HARNESS_DIR / "test_agent_config.json"
     agent_config = {}
     if config_path.exists():
         full_config = json.loads(config_path.read_text())
         agent_config = dict(full_config.get("agent", {}))
-
-        # Apply scenario overrides
         agent_overrides = dict(scenario.get("agent_overrides", {}))
         if "instructions_file" in agent_overrides:
             ipath = HARNESS_DIR / agent_overrides.pop("instructions_file")
@@ -200,14 +93,19 @@ async def run_phone_test(scenario_path: str, num_calls: int = 1, run_id: str | N
             else:
                 agent_config[key] = val
 
+    logger.info(f"{'=' * 60}")
+    logger.info(f"  Phone Test: {run_id}")
+    logger.info(f"  Scenario: {scenario['name']} ({scenario.get('language', 'en')})")
+    logger.info(f"  Calls: {num_calls}")
+    logger.info(f"  SIP: Agent({AGENT_PHONE_NUMBER}) ↔ Caller({TEST_PHONE_NUMBER})")
+    logger.info(f"{'=' * 60}")
+
+    # Check tester agent is running
+    logger.info("Ensure tester agent is running: cd tester && uv run python agent.py dev")
+
     lk_url = os.environ["LIVEKIT_URL"]
     lk_key = os.environ["LIVEKIT_API_KEY"]
     lk_secret = os.environ["LIVEKIT_API_SECRET"]
-
-    twilio = TwilioClient(TWILIO_SID, TWILIO_TOKEN)
-
-    # Configure test number to answer with scenario TwiML
-    _configure_test_number(twilio, twiml)
 
     all_results = []
 
@@ -218,13 +116,13 @@ async def run_phone_test(scenario_path: str, num_calls: int = 1, run_id: str | N
         call_dir = run_dir / f"call_{i+1}_{int(time.time())}"
         call_dir.mkdir(parents=True, exist_ok=True)
 
-        result = await _run_phone_call(
+        result = await _run_call(
             lk_url, lk_key, lk_secret,
-            scenario, agent_config, twiml,
+            scenario, agent_config, full_config,
             call_dir, i + 1,
         )
 
-        # Wait for session log
+        # Wait for phone agent to finalize session log
         await asyncio.sleep(10)
 
         # Copy session log
@@ -237,10 +135,9 @@ async def run_phone_test(scenario_path: str, num_calls: int = 1, run_id: str | N
                 session_data = json.loads(new_logs[0].read_text())
                 result["session_metrics"] = _extract_metrics(session_data)
 
-        # Download recording from Twilio
-        if result.get("twilio_call_sid"):
-            await asyncio.sleep(5)
-            _download_recording(twilio, result["twilio_call_sid"], call_dir)
+        # Download Twilio recording
+        if TWILIO_SID and TWILIO_TOKEN:
+            _download_twilio_recordings(call_dir, result)
 
         (call_dir / "result.json").write_text(json.dumps(result, indent=2, default=str))
         all_results.append(result)
@@ -252,15 +149,13 @@ async def run_phone_test(scenario_path: str, num_calls: int = 1, run_id: str | N
     _report(all_results, scenario, run_dir)
 
 
-async def _run_phone_call(
-    lk_url: str, lk_key: str, lk_secret: str,
-    scenario: dict, agent_config: dict, twiml: str,
-    call_dir: Path, call_index: int,
+async def _run_call(
+    lk_url, lk_key, lk_secret,
+    scenario, agent_config, full_config,
+    call_dir, call_index,
 ) -> dict:
-    """Dispatch phone agent to call our Twilio test number."""
-    import uuid
-
-    conv_id = f"test-{uuid.uuid4().hex[:20]}"
+    """Run a single phone call."""
+    conv_id = f"test-{uuid.uuid4().hex[:12]}"
     room_name = f"call-{conv_id}"
 
     lk = lk_api.LiveKitAPI(lk_url, lk_key, lk_secret)
@@ -268,75 +163,92 @@ async def _run_phone_call(
     try:
         # 1. Create room
         await lk.room.create_room(lk_api.CreateRoomRequest(
-            name=room_name, empty_timeout=300, max_participants=10,
+            name=room_name, empty_timeout=180, max_participants=10,
         ))
         logger.info(f"[Call {call_index}] Room: {room_name}")
 
-        # 2. Configure Twilio test number to answer with our TwiML
-        twilio = TwilioClient(TWILIO_SID, TWILIO_TOKEN)
-        numbers = twilio.incoming_phone_numbers.list(phone_number=TEST_PHONE_NUMBER)
-        if numbers:
-            # Store TwiML as a TwiML Bin-like endpoint
-            # We can't set inline TwiML for incoming calls, so we need a URL.
-            # Use Twilio's built-in <Response> via a simple bin.
-            # Simplest: use Twilio's TwiML Bins API
-            twiml_bin = twilio.serverless.v1 \
-                if hasattr(twilio, 'serverless') else None
-
-            # Actually, just use a Twilio Function URL or update voice_url
-            # For now, store TwiML in the number's voice configuration
-            # Twilio supports setting a TwiML application SID or a URL
-            pass
-
-        # 3. Dispatch phone agent in TestPhoneMode
-        # The agent will make an outbound call to TEST_PHONE_NUMBER
-        full_config = json.loads((HARNESS_DIR / "test_agent_config.json").read_text())
-        metadata = json.dumps({
+        # 2. Dispatch phone agent (TestVoiceMode — waits for participant)
+        phone_metadata = json.dumps({
             "test": {
-                "mode": "phone",
+                "mode": "voice",
                 "conversation_id": conv_id,
-                "agent_id": DEFAULT_AGENT_ID,
-                "campaign_phone": DEFAULT_CAMPAIGN_PHONE,
-                "phone_number": TEST_PHONE_NUMBER,
+                "agent_id": agent_config.get("_id", "test"),
+                "campaign_phone": "+18552563017",
                 "local_agent_config": agent_config,
                 "campaign_data": full_config.get("campaign"),
                 "company_data": full_config.get("company"),
             }
         })
+        await lk.agent_dispatch.create_dispatch(lk_api.CreateAgentDispatchRequest(
+            room=room_name, agent_name=PHONE_AGENT_NAME, metadata=phone_metadata,
+        ))
+        logger.info(f"[Call {call_index}] Phone agent dispatched")
 
-        dispatch = await lk.agent_dispatch.create_dispatch(
-            lk_api.CreateAgentDispatchRequest(
-                room=room_name,
-                agent_name=AGENT_NAME,
-                metadata=metadata,
-            )
-        )
+        # 3. Wait a moment then create SIP participant (bridges to Twilio PSTN)
+        # This makes a real phone call from AGENT_PHONE_NUMBER to TEST_PHONE_NUMBER
+        # Twilio answers on TEST_PHONE_NUMBER with TwiML (records the call)
+        await asyncio.sleep(2)
+
+        # Configure Twilio number to record when it answers
+        if TWILIO_SID and TWILIO_TOKEN:
+            _configure_twilio_recording(scenario)
+
+        logger.info(f"[Call {call_index}] Creating SIP call {AGENT_PHONE_NUMBER} → {TEST_PHONE_NUMBER}...")
         call_start = time.time()
-        logger.info(f"[Call {call_index}] Agent dispatched, calling {TEST_PHONE_NUMBER}...")
 
-        # 4. Wait for the call to complete
-        # Poll room participants to detect when SIP participant disconnects
-        max_wait = 120
-        elapsed = 0
-        while elapsed < max_wait:
-            await asyncio.sleep(5)
-            elapsed += 5
+        await lk.sip.create_sip_participant(lk_api.CreateSIPParticipantRequest(
+            room_name=room_name,
+            sip_trunk_id=SIP_OUTBOUND_TRUNK,
+            sip_call_to=TEST_PHONE_NUMBER,
+            participant_identity="phone-caller",
+        ))
+        logger.info(f"[Call {call_index}] SIP participant created, call ringing...")
+
+        # 4. Start Twilio recording once call connects
+        await asyncio.sleep(5)  # Wait for call to connect
+        if TWILIO_SID and TWILIO_TOKEN:
             try:
-                participants = await lk.room.list_participants(
+                from twilio.rest import Client as TwilioC
+                tw = TwilioC(TWILIO_SID, TWILIO_TOKEN)
+                # Find the active call to our test number
+                active_calls = tw.calls.list(to=TEST_PHONE_NUMBER, status="in-progress", limit=1)
+                if active_calls:
+                    call_sid = active_calls[0].sid
+                    tw.calls(call_sid).recordings.create(
+                        recording_channels="dual",
+                        recording_status_callback_event=["completed"],
+                    )
+                    logger.info(f"[Call {call_index}] Recording started on {call_sid}")
+                    result_holder = {"twilio_call_sid": call_sid}
+                else:
+                    logger.warning(f"[Call {call_index}] No active Twilio call found to record")
+                    result_holder = {}
+            except Exception as e:
+                logger.warning(f"[Call {call_index}] Recording start failed: {e}")
+                result_holder = {}
+        else:
+            result_holder = {}
+
+        # 5. Monitor call progress
+        max_wait = 120
+        for tick in range(max_wait // 5):
+            await asyncio.sleep(5)
+            elapsed = (tick + 1) * 5
+            try:
+                parts = await lk.room.list_participants(
                     lk_api.ListParticipantsRequest(room=room_name)
                 )
-                pcount = len(participants.participants) if participants.participants else 0
+                pcount = len(parts.participants) if parts.participants else 0
+                names = [p.identity for p in (parts.participants or [])]
                 if elapsed % 15 == 0:
-                    logger.info(f"[Call {call_index}] {elapsed}s elapsed, {pcount} participants")
-                if elapsed > 15 and pcount <= 1:
-                    logger.info(f"[Call {call_index}] Call appears ended (1 or fewer participants)")
+                    logger.info(f"[Call {call_index}] {elapsed}s: {pcount} participants {names}")
+                if elapsed > 20 and pcount <= 1:
+                    logger.info(f"[Call {call_index}] Call ended ({elapsed}s)")
                     break
             except Exception:
                 break
 
-        call_end = time.time()
-        call_duration = round(call_end - call_start)
-        logger.info(f"[Call {call_index}] Call complete ({call_duration}s)")
+        call_duration = round(time.time() - call_start)
 
         # 5. Cleanup room
         try:
@@ -344,20 +256,12 @@ async def _run_phone_call(
         except Exception:
             pass
 
-        # 6. Find the Twilio call SID for recording download
-        # Search recent Twilio calls to our test number
-        twilio_calls = twilio.calls.list(to=TEST_PHONE_NUMBER, limit=3)
-        twilio_call_sid = None
-        for tc in twilio_calls:
-            if tc.start_time and (time.time() - tc.start_time.timestamp()) < 300:
-                twilio_call_sid = tc.sid
-                break
-
         return {
             "call_index": call_index,
             "room_name": room_name,
+            "conv_id": conv_id,
             "duration_sec": call_duration,
-            "twilio_call_sid": twilio_call_sid,
+            "twilio_call_sid": result_holder.get("twilio_call_sid"),
         }
 
     except Exception as e:
@@ -369,71 +273,131 @@ async def _run_phone_call(
         await lk.aclose()
 
 
-def _configure_test_number(twilio: TwilioClient, twiml: str):
-    """Update the test phone number to answer with the given TwiML."""
+def _configure_twilio_recording(scenario: dict):
+    """Configure the Twilio test number to answer and record."""
     import urllib.parse
-    echo_url = "http://twimlets.com/echo?Twiml=" + urllib.parse.quote(twiml)
+    from twilio.rest import Client
 
-    numbers = twilio.incoming_phone_numbers.list(phone_number=TEST_PHONE_NUMBER)
+    client = Client(TWILIO_SID, TWILIO_TOKEN)
+
+    # TwiML that answers, pauses (lets agent greeting play), then records
+    language = scenario.get("language", "en")
+    voice_map = {
+        "en": "Polly.Matthew", "tr": "Polly.Filiz", "ar": "Polly.Zeina",
+        "de": "Polly.Hans", "es": "Polly.Miguel", "fr": "Polly.Mathieu",
+    }
+    voice = voice_map.get(language, "Polly.Matthew")
+
+    # Build TwiML with prompts
+    parts = ['<Response>']
+    wait = scenario.get("tester", {}).get("wait_after_greeting_sec", 4)
+    if wait > 0:
+        parts.append(f'<Pause length="{int(wait)}"/>')
+
+    for prompt in scenario.get("prompts", []):
+        parts.append(f'<Say voice="{voice}" language="{language}">{prompt["text"]}</Say>')
+        pause = prompt.get("pause_after_sec", 4)
+        if prompt.get("wait_for_response", True):
+            parts.append(f'<Pause length="{int(pause)}"/>')
+
+    parts.append('<Pause length="2"/><Hangup/></Response>')
+    twiml = "".join(parts)
+
+    echo_url = "https://twimlets.com/echo?Twiml=" + urllib.parse.quote(twiml)
+
+    numbers = client.incoming_phone_numbers.list(phone_number=TEST_PHONE_NUMBER)
     if numbers:
         numbers[0].update(voice_url=echo_url, voice_method="GET")
-        logger.info(f"Configured {TEST_PHONE_NUMBER} with scenario TwiML ({len(twiml)} chars)")
-    else:
-        logger.error(f"Test number {TEST_PHONE_NUMBER} not found in Twilio")
+        logger.info(f"Twilio {TEST_PHONE_NUMBER} configured with TwiML ({len(twiml)} chars)")
 
 
-def _download_recording(twilio: TwilioClient, call_sid: str, call_dir: Path):
-    """Download call recording from Twilio."""
+def _download_twilio_recordings(call_dir: Path, result: dict):
+    """Download Twilio recording for this call."""
+    from twilio.rest import Client
+
+    call_sid = result.get("twilio_call_sid")
+    if not call_sid:
+        logger.warning("No Twilio call SID — can't download recording")
+        return
+
     try:
-        recordings = twilio.recordings.list(call_sid=call_sid, limit=1)
+        client = Client(TWILIO_SID, TWILIO_TOKEN)
+
+        # Wait a bit for recording to finalize
+        time.sleep(5)
+
+        # Check for recordings on this specific call
+        recordings = client.recordings.list(call_sid=call_sid, limit=1)
         if not recordings:
-            # Try the parent call
-            call = twilio.calls(call_sid).fetch()
-            if call.parent_call_sid:
-                recordings = twilio.recordings.list(call_sid=call.parent_call_sid, limit=1)
+            logger.warning(f"No recording found for call {call_sid}")
+            # Try listing all recent recordings
+            all_recs = client.recordings.list(limit=5)
+            if all_recs:
+                logger.info(f"Found {len(all_recs)} other recordings — checking...")
+                for r in all_recs:
+                    if r.call_sid == call_sid:
+                        recordings = [r]
+                        break
 
-        if recordings:
-            rec = recordings[0]
-            url = f"https://api.twilio.com/2010-04-01/Accounts/{TWILIO_SID}/Recordings/{rec.sid}.mp3"
-            auth = base64.b64encode(f"{TWILIO_SID}:{TWILIO_TOKEN}".encode()).decode()
-            req = urllib.request.Request(url, headers={"Authorization": f"Basic {auth}"})
+        if not recordings:
+            logger.warning("No recording available yet (may still be processing)")
+            return
 
-            recording_path = call_dir / f"recording_{rec.sid}.mp3"
-            with urllib.request.urlopen(req) as resp:
-                recording_path.write_bytes(resp.read())
+        rec = recordings[0]
+        url = f"https://api.twilio.com/2010-04-01/Accounts/{TWILIO_SID}/Recordings/{rec.sid}.mp3"
+        auth = base64.b64encode(f"{TWILIO_SID}:{TWILIO_TOKEN}".encode()).decode()
 
-            logger.info(f"Recording saved: {recording_path} ({recording_path.stat().st_size} bytes)")
-        else:
-            logger.warning("No recording found on Twilio")
+        rec_path = call_dir / f"recording_{rec.sid}.mp3"
+        req = urllib.request.Request(url, headers={"Authorization": f"Basic {auth}"})
+        with urllib.request.urlopen(req) as resp:
+            rec_path.write_bytes(resp.read())
+
+        # Also copy to recordings/ for easy access
+        RECORDINGS_DIR.mkdir(exist_ok=True)
+        conv_id = result.get("conv_id", "unknown")
+        easy_path = RECORDINGS_DIR / f"{conv_id}.mp3"
+        shutil.copy2(rec_path, easy_path)
+
+        size = rec_path.stat().st_size
+        logger.info(f"Recording saved: {rec_path} ({size} bytes)")
+        logger.info(f"Easy access: {easy_path}")
+        result["recording_path"] = str(rec_path)
+        result["recording_easy_path"] = str(easy_path)
+        result["recording_sid"] = rec.sid
+
     except Exception as e:
-        logger.warning(f"Failed to download recording: {e}")
+        logger.warning(f"Recording download failed: {e}")
 
 
 def _extract_metrics(session_data: dict) -> dict:
-    """Extract metrics from phone agent session log."""
     events = session_data.get("events", [])
     metrics = {}
 
-    llm_events = [e for e in events if e.get("kind") == "llm" and e.get("ttft_ms")]
-    if llm_events:
-        ttfts = [e["ttft_ms"] for e in llm_events]
+    llm = [e for e in events if e.get("kind") == "llm" and e.get("ttft_ms")]
+    if llm:
+        ttfts = [e["ttft_ms"] for e in llm]
         metrics["llm_ttft_values"] = ttfts
         metrics["llm_ttft_avg"] = round(sum(ttfts) / len(ttfts))
 
-    tts_events = [e for e in events if e.get("kind") == "tts" and e.get("ttfb_ms")]
-    if tts_events:
-        metrics["tts_ttfb_avg"] = round(sum(e["ttfb_ms"] for e in tts_events) / len(tts_events))
+    tts = [e for e in events if e.get("kind") == "tts" and e.get("ttfb_ms")]
+    if tts:
+        metrics["tts_ttfb_avg"] = round(sum(e["ttfb_ms"] for e in tts) / len(tts))
 
-    aec_events = [e for e in events if e.get("kind") == "aec_first_input"]
-    if aec_events:
-        metrics["aec_first_input_sec"] = aec_events[0].get("elapsed_since_greeting_sec")
-        metrics["aec_warmup_active"] = aec_events[0].get("aec_warmup_active")
+    aec = [e for e in events if e.get("kind") == "aec_first_input"]
+    if aec:
+        metrics["aec_first_input_sec"] = aec[0].get("elapsed_since_greeting_sec")
+        metrics["aec_warmup_active"] = aec[0].get("aec_warmup_active")
+
+    stt = [e for e in events if e.get("kind") == "stt_turn"]
+    if stt:
+        metrics["stt_turns"] = len(stt)
+        metrics["phone_heard"] = " ".join(e.get("transcript", "") for e in stt)[:500]
 
     metrics["duration_sec"] = session_data.get("durationSec", 0)
     return metrics
 
 
-def _report(results: list, scenario: dict, run_dir: Path):
+def _report(results, scenario, run_dir):
     all_ttfts = []
     for r in results:
         sm = r.get("session_metrics", {})
@@ -441,7 +405,8 @@ def _report(results: list, scenario: dict, run_dir: Path):
 
     print()
     print(f"{'=' * 60}")
-    print(f"  PHONE TEST: {scenario['name']} ({sum(1 for r in results if 'error' not in r)}/{len(results)} calls)")
+    print(f"  PHONE TEST: {scenario['name']}")
+    print(f"  {sum(1 for r in results if 'error' not in r)}/{len(results)} calls")
     print(f"{'=' * 60}")
 
     if all_ttfts:
@@ -449,21 +414,24 @@ def _report(results: list, scenario: dict, run_dir: Path):
         print(f"  LLM TTFT avg:   {round(sum(all_ttfts)/len(all_ttfts))}ms")
         print(f"  LLM TTFT p50:   {all_ttfts[len(all_ttfts)//2]}ms")
         print(f"  LLM TTFT p90:   {all_ttfts[int(len(all_ttfts)*0.9)]}ms")
-        print(f"  LLM TTFT range: {min(all_ttfts)}-{max(all_ttfts)}ms")
 
     for r in results:
         sm = r.get("session_metrics", {})
-        aec = sm.get("aec_first_input_sec", "?")
-        aec_active = sm.get("aec_warmup_active", "?")
-        rec = "yes" if r.get("twilio_call_sid") else "no"
-        print(f"  Call {r.get('call_index', '?')}: dur={r.get('duration_sec', '?')}s rec={rec} aec={aec}s warmup_active={aec_active}")
+        rec = "yes" if r.get("recording_path") else "no"
+        aec_sec = sm.get("aec_first_input_sec", "?")
+        print(f"\n  Call {r.get('call_index', '?')}: dur={r.get('duration_sec', '?')}s rec={rec} aec_first_input={aec_sec}s")
         if sm.get("llm_ttft_values"):
             print(f"    TTFT per turn: {sm['llm_ttft_values']}")
+        if sm.get("phone_heard"):
+            print(f"    Heard: {sm['phone_heard'][:100]}...")
+        if r.get("recording_path"):
+            print(f"    Recording: {r['recording_path']}")
 
     print(f"\n  Results: {run_dir}/")
+    print(f"  Recordings: {RECORDINGS_DIR}/")
     print(f"{'=' * 60}")
 
-    agg = {"results": [r for r in results], "scenario": scenario["name"]}
+    agg = {"scenario": scenario["name"], "results": results}
     if all_ttfts:
         agg["llm_ttft_avg"] = round(sum(all_ttfts) / len(all_ttfts))
     (run_dir / "aggregate.json").write_text(json.dumps(agg, indent=2, default=str))
@@ -474,15 +442,11 @@ def main():
     parser.add_argument("scenario", help="Scenario YAML")
     parser.add_argument("--calls", type=int, default=1)
     parser.add_argument("--run-id")
-    parser.add_argument("--setup-twiml", action="store_true", help="Print TwiML and exit")
     args = parser.parse_args()
 
-    with open(args.scenario) as f:
-        scenario = yaml.safe_load(f)
-
-    if args.setup_twiml:
-        print(make_twiml(scenario))
-        return
+    if not Path(args.scenario).exists():
+        print(f"Scenario not found: {args.scenario}")
+        sys.exit(1)
 
     asyncio.run(run_phone_test(args.scenario, num_calls=args.calls, run_id=args.run_id))
 
