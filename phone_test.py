@@ -120,6 +120,7 @@ async def run_phone_test(scenario_path: str, num_calls: int = 1, run_id: str | N
             lk_url, lk_key, lk_secret,
             scenario, agent_config, full_config,
             call_dir, i + 1,
+            scenario_path=scenario_path, run_id=run_id,
         )
 
         # Wait for phone agent to finalize session log
@@ -153,6 +154,7 @@ async def _run_call(
     lk_url, lk_key, lk_secret,
     scenario, agent_config, full_config,
     call_dir, call_index,
+    scenario_path=None, run_id=None,
 ) -> dict:
     """Run a single phone call."""
     conv_id = f"test-{uuid.uuid4().hex[:12]}"
@@ -184,14 +186,19 @@ async def _run_call(
         ))
         logger.info(f"[Call {call_index}] Phone agent dispatched")
 
-        # 3. Wait a moment then create SIP participant (bridges to Twilio PSTN)
-        # This makes a real phone call from AGENT_PHONE_NUMBER to TEST_PHONE_NUMBER
-        # Twilio answers on TEST_PHONE_NUMBER with TwiML (records the call)
+        # 3. Use TwiML for the caller side (tester agent not yet functional for two-agent calls)
+        use_tester_agent = False
+
+        # 4. Create SIP participant to bridge to Twilio PSTN (for recording + fallback TwiML)
         await asyncio.sleep(2)
 
-        # Configure Twilio number to record when it answers
         if TWILIO_SID and TWILIO_TOKEN:
-            _configure_twilio_recording(scenario)
+            if use_tester_agent:
+                # Tester agent handles the conversation — Twilio just answers silently for recording
+                _configure_twilio_silent(scenario)
+            else:
+                # No tester agent — Twilio plays TwiML prompts
+                _configure_twilio_recording(scenario)
 
         logger.info(f"[Call {call_index}] Creating SIP call {AGENT_PHONE_NUMBER} → {TEST_PHONE_NUMBER}...")
         call_start = time.time()
@@ -204,8 +211,8 @@ async def _run_call(
         ))
         logger.info(f"[Call {call_index}] SIP participant created, call ringing...")
 
-        # 4. Start Twilio recording once call connects
-        await asyncio.sleep(5)  # Wait for call to connect
+        # 5. Start Twilio recording once call connects
+        await asyncio.sleep(8)  # Wait for SIP call to connect through PSTN
         if TWILIO_SID and TWILIO_TOKEN:
             try:
                 from twilio.rest import Client as TwilioC
@@ -271,6 +278,21 @@ async def _run_call(
         return {"error": str(e), "call_index": call_index}
     finally:
         await lk.aclose()
+
+
+def _configure_twilio_silent(scenario: dict):
+    """Configure Twilio number to answer silently — just for recording bridge."""
+    import urllib.parse
+    from twilio.rest import Client
+
+    client = Client(TWILIO_SID, TWILIO_TOKEN)
+    # Answer and hold the line silently — long pause then hangup
+    twiml = "<Response><Pause length=\"120\"/><Hangup/></Response>"
+    echo_url = "https://twimlets.com/echo?Twiml=" + urllib.parse.quote(twiml)
+    numbers = client.incoming_phone_numbers.list(phone_number=TEST_PHONE_NUMBER)
+    if numbers:
+        numbers[0].update(voice_url=echo_url, voice_method="GET")
+        logger.info(f"Twilio {TEST_PHONE_NUMBER} configured for silent recording bridge")
 
 
 def _configure_twilio_recording(scenario: dict):
