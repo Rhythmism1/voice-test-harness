@@ -16,6 +16,7 @@ dependencies = [
     "httpx",
     "aiohttp",
     "numpy",
+    "twilio",
 ]
 
 [tool.uv]
