@@ -17,6 +17,7 @@ dependencies = [
     "aiohttp",
     "numpy",
     "twilio",
+    "boto3",
 ]
 
 [tool.uv]

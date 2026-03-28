@@ -108,7 +108,7 @@ async def entrypoint(ctx: JobContext):
                 "text": event.transcript,
                 "elapsed": round(time.time() - call_start, 1),
             })
-            logger.info(f"[Tester] Heard agent say: {event.transcript[:60]}")
+            logger.info(f"[Tester] Heard agent: \"{event.transcript}\"")
 
     # Create the tester agent with the persona
     agent = Agent(instructions=instructions)

@@ -112,9 +112,10 @@ async def run_phone_test(scenario_path: str, num_calls: int = 1, run_id: str | N
                 logger.info(f"Copied phone session log: {new_logs[0].name}")
                 result["session_metrics"] = _extract_metrics(json.loads(new_logs[0].read_text()))
 
-        # Download recording from Twilio
-        if result.get("twilio_call_sid") and TWILIO_SID:
-            _download_recording(call_dir, result)
+        # Download recording from S3
+        if result.get("egress_id"):
+            await asyncio.sleep(5)  # Wait for egress to finalize
+            _download_s3_recording(call_dir, result)
 
         (call_dir / "result.json").write_text(json.dumps(result, indent=2, default=str))
         all_results.append(result)
@@ -174,19 +175,32 @@ async def _run_call(scenario, agent_config, full_config, call_dir, call_index) -
         # 4. Try to start Twilio recording
         twilio_call_sid = None
         await asyncio.sleep(5)
-        if TWILIO_SID and TWILIO_TOKEN:
-            try:
-                from twilio.rest import Client
-                tw = Client(TWILIO_SID, TWILIO_TOKEN)
-                active = tw.calls.list(
-                    from_=OUTBOUND["twilio_number"], status="in-progress", limit=1
-                )
-                if active:
-                    twilio_call_sid = active[0].sid
-                    tw.calls(twilio_call_sid).recordings.create(recording_channels="dual")
-                    logger.info(f"[Call {call_index}] Recording started: {twilio_call_sid}")
-            except Exception as e:
-                logger.warning(f"[Call {call_index}] Recording: {e}")
+        # Start LiveKit room composite egress for recording (audio only, to S3)
+        egress_id = None
+        try:
+            from livekit.protocol.egress import (
+                RoomCompositeEgressRequest, EncodedFileOutput, EncodedFileType, S3Upload
+            )
+            s3_config = S3Upload(
+                access_key=os.environ.get("AWS_ACCESS_KEY_ID", ""),
+                secret=os.environ.get("AWS_SECRET_ACCESS_KEY", ""),
+                bucket=os.environ.get("AWS_S3_BUCKET", "local-convex-testing"),
+                region=os.environ.get("AWS_REGION", "us-east-1"),
+            )
+            egress_req = RoomCompositeEgressRequest(
+                room_name=room_name,
+                audio_only=True,
+                file_outputs=[EncodedFileOutput(
+                    file_type=EncodedFileType.OGG,
+                    filepath=f"test-recordings/{conv_id}.ogg",
+                    s3=s3_config,
+                )],
+            )
+            egress = await lk.egress.start_room_composite_egress(egress_req)
+            egress_id = egress.egress_id
+            logger.info(f"[Call {call_index}] Recording egress started: {egress_id}")
+        except Exception as e:
+            logger.warning(f"[Call {call_index}] Egress recording failed: {e}")
 
         # 5. Monitor call
         for tick in range(30):  # up to 2.5 min
@@ -208,6 +222,14 @@ async def _run_call(scenario, agent_config, full_config, call_dir, call_index) -
 
         call_duration = round(time.time() - call_start)
 
+        # Stop egress recording
+        if egress_id:
+            try:
+                await lk.egress.stop_egress(lk_api.StopEgressRequest(egress_id=egress_id))
+                logger.info(f"[Call {call_index}] Recording egress stopped")
+            except Exception as e:
+                logger.debug(f"[Call {call_index}] Egress stop: {e}")
+
         try:
             await lk.room.delete_room(lk_api.DeleteRoomRequest(room=room_name))
         except Exception:
@@ -219,6 +241,7 @@ async def _run_call(scenario, agent_config, full_config, call_dir, call_index) -
             "conv_id": conv_id,
             "duration_sec": call_duration,
             "twilio_call_sid": twilio_call_sid,
+            "egress_id": egress_id,
         }
 
     except Exception as e:
@@ -247,6 +270,32 @@ def _apply_overrides(agent_config, scenario):
             agent_config["config"] = cfg
         else:
             agent_config[key] = val
+
+
+def _download_s3_recording(call_dir, result):
+    """Download recording from S3 after egress completes."""
+    conv_id = result.get("conv_id", "unknown")
+    s3_key = f"test-recordings/{conv_id}.ogg"
+    try:
+        import boto3
+        s3 = boto3.client(
+            "s3",
+            aws_access_key_id=os.environ.get("AWS_ACCESS_KEY_ID"),
+            aws_secret_access_key=os.environ.get("AWS_SECRET_ACCESS_KEY"),
+            region_name=os.environ.get("AWS_REGION", "us-east-1"),
+        )
+        bucket = os.environ.get("AWS_S3_BUCKET", "local-convex-testing")
+        rec_path = call_dir / f"recording_{conv_id}.ogg"
+        s3.download_file(bucket, s3_key, str(rec_path))
+
+        RECORDINGS_DIR.mkdir(exist_ok=True)
+        easy = RECORDINGS_DIR / f"{conv_id}.ogg"
+        shutil.copy2(rec_path, easy)
+        logger.info(f"Recording downloaded: {rec_path} ({rec_path.stat().st_size} bytes)")
+        logger.info(f"Easy access: {easy}")
+        result["recording_path"] = str(rec_path)
+    except Exception as e:
+        logger.warning(f"S3 recording download failed: {e}")
 
 
 def _download_recording(call_dir, result):
