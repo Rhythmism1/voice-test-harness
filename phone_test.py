@@ -141,7 +141,35 @@ async def _run_call(scenario, agent_config, full_config, call_dir, call_index) -
         ))
         logger.info(f"[Call {call_index}] Room A: {room_name} (e2e-outbound)")
 
-        # 2. Dispatch phone agent to Room A
+        # 2. Start recording egress FIRST — before anything happens in the room
+        egress_id = None
+        try:
+            from livekit.protocol.egress import (
+                RoomCompositeEgressRequest, EncodedFileOutput, EncodedFileType, S3Upload
+            )
+            s3_config = S3Upload(
+                access_key=os.environ.get("AWS_ACCESS_KEY_ID", ""),
+                secret=os.environ.get("AWS_SECRET_ACCESS_KEY", ""),
+                bucket=os.environ.get("AWS_S3_BUCKET", "local-convex-testing"),
+                region=os.environ.get("AWS_REGION", "us-east-1"),
+            )
+            egress = await lk.egress.start_room_composite_egress(
+                RoomCompositeEgressRequest(
+                    room_name=room_name,
+                    audio_only=True,
+                    file_outputs=[EncodedFileOutput(
+                        file_type=EncodedFileType.OGG,
+                        filepath=f"test-recordings/{conv_id}.ogg",
+                        s3=s3_config,
+                    )],
+                )
+            )
+            egress_id = egress.egress_id
+            logger.info(f"[Call {call_index}] Recording started (egress {egress_id})")
+        except Exception as e:
+            logger.warning(f"[Call {call_index}] Egress failed: {e}")
+
+        # 3. Dispatch phone agent to Room A
         metadata = json.dumps({
             "test": {
                 "mode": "voice",
@@ -172,35 +200,7 @@ async def _run_call(scenario, agent_config, full_config, call_dir, call_index) -
         ))
         logger.info(f"[Call {call_index}] SIP call connected")
 
-        # 4. Try to start Twilio recording
         twilio_call_sid = None
-        await asyncio.sleep(5)
-        # Start LiveKit room composite egress for recording (audio only, to S3)
-        egress_id = None
-        try:
-            from livekit.protocol.egress import (
-                RoomCompositeEgressRequest, EncodedFileOutput, EncodedFileType, S3Upload
-            )
-            s3_config = S3Upload(
-                access_key=os.environ.get("AWS_ACCESS_KEY_ID", ""),
-                secret=os.environ.get("AWS_SECRET_ACCESS_KEY", ""),
-                bucket=os.environ.get("AWS_S3_BUCKET", "local-convex-testing"),
-                region=os.environ.get("AWS_REGION", "us-east-1"),
-            )
-            egress_req = RoomCompositeEgressRequest(
-                room_name=room_name,
-                audio_only=True,
-                file_outputs=[EncodedFileOutput(
-                    file_type=EncodedFileType.OGG,
-                    filepath=f"test-recordings/{conv_id}.ogg",
-                    s3=s3_config,
-                )],
-            )
-            egress = await lk.egress.start_room_composite_egress(egress_req)
-            egress_id = egress.egress_id
-            logger.info(f"[Call {call_index}] Recording egress started: {egress_id}")
-        except Exception as e:
-            logger.warning(f"[Call {call_index}] Egress recording failed: {e}")
 
         # 5. Monitor call
         for tick in range(30):  # up to 2.5 min
