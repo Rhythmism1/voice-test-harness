@@ -28,10 +28,11 @@ from livekit.agents import (
 )
 from livekit.plugins import cartesia, deepgram, openai, silero
 
-# Load env from harness and phone agent
+# Load env: e2e config first (LiveKit creds), then provider keys from phone agent
 HARNESS_DIR = Path(__file__).parent.parent
-load_dotenv(str(HARNESS_DIR / ".env.local"))
-load_dotenv(str(HARNESS_DIR.parent / "phone" / ".env.local"))
+load_dotenv(str(Path(__file__).parent / ".env.e2e"))  # LiveKit inbound project
+load_dotenv(str(HARNESS_DIR / ".env.local"))           # Twilio creds etc
+load_dotenv(str(HARNESS_DIR.parent / "phone" / ".env.local"))  # Provider keys (Cartesia, OpenAI, etc)
 
 logger = logging.getLogger("tester-agent")
 
@@ -47,12 +48,28 @@ async def entrypoint(ctx: JobContext):
     run_id = metadata.get("run_id", f"run_{int(time.time())}")
     call_index = metadata.get("call_index", 1)
 
-    if not scenario_path or not Path(scenario_path).exists():
-        logger.error(f"Scenario not found: {scenario_path}")
-        return
+    # Load scenario — from metadata, or from the "active" scenario file
+    active_scenario = HARNESS_DIR / "active_scenario.yaml"
+    scenario = None
 
-    with open(scenario_path) as f:
-        scenario = yaml.safe_load(f)
+    if scenario_path and Path(scenario_path).exists():
+        with open(scenario_path) as f:
+            scenario = yaml.safe_load(f)
+    elif active_scenario.exists():
+        with open(active_scenario) as f:
+            scenario = yaml.safe_load(f)
+        logger.info(f"[Tester] Using active scenario: {active_scenario}")
+    else:
+        # Default: generic test caller
+        scenario = {
+            "name": "default",
+            "language": "en",
+            "tester": {
+                "instructions": "You are a test caller. Have a natural, friendly conversation. Ask about services available.",
+            },
+            "prompts": [],
+        }
+        logger.info("[Tester] No scenario found — using default instructions")
 
     tester_config = scenario.get("tester", {})
     instructions = tester_config.get("instructions", "You are a test caller. Have a natural conversation.")

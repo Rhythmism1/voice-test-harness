@@ -1,0 +1,66 @@
+# End-to-end refund call test
+# Tests: full conversation flow, agent policy adherence, latency under real conditions
+name: refund_call
+language: en
+description: "Customer calling about a refund on a pair of headphones"
+
+# Phone agent plays the call center agent
+agent_overrides:
+  instructions_file: prompts/refund_agent.txt
+  config:
+    stt:
+      provider: speechmatics
+      language: en
+      ensembleEnabled: false
+    llm:
+      model: gpt-4.1
+
+# Tester agent plays the customer
+tester:
+  voice: a0e99841-438c-4a64-b679-ae501e7d6091
+  wait_after_greeting_sec: 2
+  instructions: |
+    You are Alex, a frustrated but polite customer calling ShopDirect about a refund.
+    You bought wireless headphones 2 weeks ago, order number SD-78432.
+    The headphones stopped working after 3 days — the right earbud has no sound.
+    You want a full refund.
+
+    Conversation flow:
+    1. When the agent greets you, explain your situation briefly
+    2. Provide your order number when asked
+    3. Explain the defect (right earbud no sound after 3 days)
+    4. If they mention policy, confirm the item is within 30 days
+    5. Ask how long the refund will take
+    6. Thank them and hang up
+
+    Keep responses natural and short — like a real phone call.
+    Don't monologue. Answer questions directly.
+
+# Prompts for TwiML fallback (if tester agent isn't available)
+prompts:
+  - text: "Hi, I'd like to get a refund on a pair of headphones I bought recently."
+    pause_after_sec: 5
+    wait_for_response: true
+
+  - text: "Sure, my order number is S D seven eight four three two."
+    pause_after_sec: 5
+    wait_for_response: true
+
+  - text: "The right earbud stopped working after just three days. There's no sound at all from it."
+    pause_after_sec: 5
+    wait_for_response: true
+
+  - text: "I bought them about two weeks ago. They're still in the box, I just can't use them."
+    pause_after_sec: 5
+    wait_for_response: true
+
+  - text: "Okay, how long will the refund take to process?"
+    pause_after_sec: 5
+    wait_for_response: true
+
+  - text: "Great, thank you for your help Sarah. Have a good day."
+    pause_after_sec: 3
+    wait_for_response: true
+
+thresholds:
+  max_avg_llm_ttft_ms: 1500

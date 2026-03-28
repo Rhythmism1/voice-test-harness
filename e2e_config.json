@@ -1,0 +1,21 @@
+{
+  "outbound_project": {
+    "name": "e2e-outbound",
+    "url": "wss://e2e-outbound-o6f8ohvn.livekit.cloud",
+    "api_key": "APIc7fUiT2azPhr",
+    "api_secret": "kcuIHMzW8MSnGeahWzBFSFgcvR5yfHhFlMExEeJWYJMA",
+    "sip_outbound_trunk": "ST_Sm2NEB6suhFQ",
+    "twilio_number": "+17328386479",
+    "role": "phone_agent"
+  },
+  "inbound_project": {
+    "name": "e2e-inbound",
+    "url": "wss://e2e-inbound-lxnt5fa9.livekit.cloud",
+    "api_key": "APIsDchwrUHUoC6",
+    "api_secret": "gjx4YiZOu3Ld3Bn1pEWuEji9z3peEAfC7DCy8XgxCwp",
+    "livekit_number": "+17329441794",
+    "dispatch_rule": "SDR_nbvUwgguxhBu",
+    "role": "tester_agent"
+  },
+  "call_flow": "outbound_project calls +17329441794 via Twilio trunk → PSTN → LiveKit native inbound → dispatch → tester agent"
+}
