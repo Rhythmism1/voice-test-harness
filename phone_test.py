@@ -259,6 +259,16 @@ def _apply_overrides(agent_config, scenario):
         ipath = HARNESS_DIR / overrides.pop("instructions_file")
         if ipath.exists():
             overrides["instructions"] = ipath.read_text()
+
+    # Handle greeting override — apply to subagent greeting
+    if "greeting" in overrides:
+        greeting_text = overrides.pop("greeting")
+        subagents = agent_config.get("subagents", [])
+        if subagents:
+            subagents[0].setdefault("greetings", {})["greeting"] = greeting_text
+        else:
+            agent_config.setdefault("greetings", {})["workingHours"] = greeting_text
+
     for key, val in overrides.items():
         if key == "config" and isinstance(val, dict):
             cfg = dict(agent_config.get("config", {}))
@@ -268,6 +278,12 @@ def _apply_overrides(agent_config, scenario):
                 else:
                     cfg[ck] = cv
             agent_config["config"] = cfg
+        elif key == "instructions":
+            # Apply to both top-level and subagent
+            agent_config[key] = val
+            subagents = agent_config.get("subagents", [])
+            if subagents:
+                subagents[0]["instructions"] = val
         else:
             agent_config[key] = val
 
