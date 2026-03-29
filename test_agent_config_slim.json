@@ -1,0 +1,185 @@
+{
+  "agent": {
+    "_creationTime": 1774607454386.4082,
+    "_id": "j57dwty1na1smcfebtprmzbedh83phqe",
+    "campaignId": "j973qr8vsh0zvkfexe09ksjbys81evh3",
+    "commitMessage": "wer",
+    "companyId": "jd77ztrjr7mch8c1134x4g9b1181evnr",
+    "config": {
+      "backgroundAudio": {
+        "ambientSound": "office",
+        "ambientVolume": 0.7,
+        "enabled": true,
+        "thinkingEnabled": true,
+        "thinkingSound": "keyboard",
+        "thinkingVolume": 0.5
+      },
+      "llm": {
+        "model": "gpt-4.1",
+        "provider": "openai"
+      },
+      "messaging": {
+        "enabled": true,
+        "idleInterval": 20,
+        "idleMessages": [
+          "Are you still there? I'm here whenever you're ready.",
+          "Take your time. I'm not going anywhere.",
+          "Just checking in \u2014 I'm here to help whenever you need me."
+        ],
+        "idleTimeout": 90
+      },
+      "noiseCancellation": {
+        "enabled": true
+      },
+      "session": {
+        "preemptiveGeneration": true,
+        "userAwayTimeout": 8
+      },
+      "stt": {
+        "ensembleEnabled": true,
+        "language": "en",
+        "languageHintsStrict": true,
+        "languages": [
+          "tr"
+        ],
+        "model": "realtime",
+        "provider": "speechmatics"
+      },
+      "turnDetection": {
+        "enabled": true,
+        "interruptionDelay": 0.6,
+        "maxTurnDuration": 30,
+        "minInterruptionWords": 1,
+        "mode": "english",
+        "silenceThreshold": 600
+      },
+      "vad": {
+        "enabled": true,
+        "sensitivity": 0.5
+      },
+      "voice": {
+        "language": "en",
+        "model": "sonic-2",
+        "provider": "cartesia",
+        "speed": 0,
+        "voiceId": "a01c369f-6d2d-4185-bc20-b32c225eab70"
+      }
+    },
+    "createdBy": "k17f9prxt7b39tq8t1dbnnnr9d81f8xe",
+    "enabledToolSlugs": [
+      "get_flight_status",
+      "get_booking_details",
+      "search_flights",
+      "check_baggage_allowance",
+      "report_lost_baggage",
+      "check_miles_balance"
+    ],
+    "instructions": "You are a customer service agent for ShopDirect, an online retailer. Your name is Sarah.\n\nRULES:\n- Be polite but follow company policy strictly\n- Refunds are only available within 30 days of purchase\n- Items must be unused and in original packaging\n- Digital items are non-refundable\n- You need the order number to look up any order\n- If the customer doesn't have their order number, ask for the email associated with the account\n- Processing time for refunds is 5-7 business days\n- You cannot offer store credit as an alternative \u2014 only full refund or no refund\n- If the item is damaged on arrival, escalate to the returns team (tell the customer you'll transfer them)\n- Keep responses concise \u2014 1-2 sentences max\n\nGREETING:\n\"Thank you for calling ShopDirect customer service, this is Sarah. How can I help you today?\"\n",
+    "name": "ShopDirect Refund Agent",
+    "parentAgentId": "j57barp4tn30zb29c660rfa7ks83pztk",
+    "personality": "Professional, empathetic, and efficient airline customer service representative. Calm under pressure, precise with regulations, warm with distressed callers.",
+    "subagents": [
+      {
+        "agentAccess": [],
+        "description": "Handles all airline customer service inquiries",
+        "greetings": {
+          "allowInterruptions": true,
+          "greeting": "Thank you for calling ShopDirect customer service, this is Sarah. How can I help you today?"
+        },
+        "id": "sa_main_001",
+        "instructions": "",
+        "name": "MAIN",
+        "tools": [
+          "get_flight_status",
+          "get_booking_details",
+          "search_flights",
+          "check_baggage_allowance",
+          "report_lost_baggage",
+          "check_miles_balance"
+        ]
+      }
+    ],
+    "summaryLanguage": "english"
+  },
+  "campaign": {
+    "_creationTime": 1771541885172.522,
+    "_id": "j973qr8vsh0zvkfexe09ksjbys81evh3",
+    "companyId": "jd77ztrjr7mch8c1134x4g9b1181evnr",
+    "createdAt": "2026-02-19T22:58:05.172Z",
+    "name": "Rhythms Local Campaign",
+    "phoneNumber": "+17328386479",
+    "productionAgentId": "j57dwty1na1smcfebtprmzbedh83phqe",
+    "sipTrunkId": "ST_Sm2NEB6suhFQ",
+    "slug": "rhythms-local-campaign",
+    "status": "active",
+    "timezone": "America/New_York",
+    "type": "both"
+  },
+  "company": {
+    "_creationTime": 1771541885172.5217,
+    "_id": "jd77ztrjr7mch8c1134x4g9b1181evnr",
+    "config": {
+      "configVersion": 1,
+      "fees": {
+        "member": {
+          "businessHours": 95,
+          "nonBusinessHours": 125
+        },
+        "nonMember": {
+          "businessHours": 125,
+          "nonBusinessHours": 155
+        }
+      },
+      "hours": {
+        "friday": [
+          {
+            "close": "17:00",
+            "open": "09:00"
+          }
+        ],
+        "monday": [
+          {
+            "close": "17:00",
+            "open": "09:00"
+          }
+        ],
+        "saturday": [],
+        "sunday": [],
+        "thursday": [
+          {
+            "close": "17:00",
+            "open": "09:00"
+          }
+        ],
+        "tuesday": [
+          {
+            "close": "17:00",
+            "open": "09:00"
+          }
+        ],
+        "wednesday": [
+          {
+            "close": "17:00",
+            "open": "09:00"
+          }
+        ]
+      },
+      "info": {
+        "phoneMain": "",
+        "sipUri": ""
+      },
+      "integrations": {},
+      "jobTypes": [],
+      "serviceAreas": {
+        "zipCodes": []
+      },
+      "transfer": {}
+    },
+    "highlightColor": "#3b82f6",
+    "language": "english",
+    "name": "Rhythms Local Company",
+    "slug": "rhythms-local-company",
+    "timezone": "America/New_York",
+    "updatedAt": "2026-02-19T22:58:05.172Z"
+  }
+}
